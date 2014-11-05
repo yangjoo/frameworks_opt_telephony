@@ -19,6 +19,7 @@ package com.android.internal.telephony;
 import static com.android.internal.telephony.RILConstants.*;
 
 import android.content.Context;
+import android.media.AudioManager;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -31,6 +32,7 @@ import android.telephony.Rlog;
 
 import android.telephony.PhoneNumberUtils;
 
+import java.io.IOException;
 import java.util.ArrayList;
 
 public class SamsungExynos4RIL extends RIL implements CommandsInterface {
@@ -118,6 +120,8 @@ public class SamsungExynos4RIL extends RIL implements CommandsInterface {
     static final int RIL_UNSOL_UTS_GETSMSMSG = 11030;
     static final int RIL_UNSOL_UTS_GET_UNREAD_SMS_STATUS = 11031;
     static final int RIL_UNSOL_MIP_CONNECT_STATUS = 11032;
+
+    private AudioManager audioManager;
 
     private Object mCatProCmdBuffer;
 
@@ -390,12 +394,12 @@ public class SamsungExynos4RIL extends RIL implements CommandsInterface {
     @Override
     protected void
     processUnsolicited (Parcel p) {
+        Object ret;
         int dataPosition = p.dataPosition();
         int response = p.readInt();
 
         switch(response) {
-            case RIL_UNSOL_STK_PROACTIVE_COMMAND: 
-                Object ret = responseString(p);
+            case RIL_UNSOL_STK_PROACTIVE_COMMAND: ret = responseString(p);
                 if (RILJ_LOGD) unsljLogRet(response, ret);
 
                 if (mCatProCmdRegistrant != null) {
@@ -408,6 +412,13 @@ public class SamsungExynos4RIL extends RIL implements CommandsInterface {
                     mCatProCmdBuffer = ret;
                 }
                 break;
+            // SAMSUNG STATES
+            case RIL_UNSOL_AM: ret = responseString(p); break;
+            case RIL_UNSOL_DUN_PIN_CONTROL_SIGNAL: ret = responseVoid(p); break;
+            case RIL_UNSOL_DATA_SUSPEND_RESUME: ret = responseInts(p); break;
+            case RIL_UNSOL_STK_CALL_CONTROL_RESULT: ret = responseVoid(p); break;
+            case RIL_UNSOL_TWO_MIC_STATE: ret = responseInts(p); break;
+            case RIL_UNSOL_WB_AMR_STATE: ret = responseInts(p); break;
 
             default:
                 // Rewind the Parcel
@@ -416,6 +427,84 @@ public class SamsungExynos4RIL extends RIL implements CommandsInterface {
                 // Forward responses that we are not overriding to the super class
                 super.processUnsolicited(p);
                 return;
+        }
+
+        switch(response) {
+            // SAMSUNG STATES
+            case RIL_UNSOL_AM:
+                if (RILJ_LOGD) samsungUnsljLogRet(response, ret);
+                String amString = (String) ret;
+                Rlog.d(RILJ_LOG_TAG, "Executing AM: " + amString);
+
+                try {
+                    Runtime.getRuntime().exec("am " + amString);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                    Rlog.e(RILJ_LOG_TAG, "am " + amString + " could not be executed.");
+                }
+                break;
+            case RIL_UNSOL_DUN_PIN_CONTROL_SIGNAL:
+                if (RILJ_LOGD) samsungUnsljLogRet(response, ret);
+                break;
+            case RIL_UNSOL_DATA_SUSPEND_RESUME:
+                if (RILJ_LOGD) samsungUnsljLogRet(response, ret);
+                break;
+            case RIL_UNSOL_STK_CALL_CONTROL_RESULT:
+                if (RILJ_LOGD) samsungUnsljLogRet(response, ret);
+                break;
+            case RIL_UNSOL_TWO_MIC_STATE:
+                if (RILJ_LOGD) samsungUnsljLogRet(response, ret);
+                break;
+            case RIL_UNSOL_WB_AMR_STATE:
+                if (RILJ_LOGD) samsungUnsljLogRet(response, ret);
+                setWbAmr(((int[])ret)[0]);
+                break;
+        }
+    }
+
+    static String
+    samsungResponseToString(int request)
+    {
+        switch(request) {
+            // SAMSUNG STATES
+            case RIL_UNSOL_AM: return "RIL_UNSOL_AM";
+            case RIL_UNSOL_DUN_PIN_CONTROL_SIGNAL: return "RIL_UNSOL_DUN_PIN_CONTROL_SIGNAL";
+            case RIL_UNSOL_DATA_SUSPEND_RESUME: return "RIL_UNSOL_DATA_SUSPEND_RESUME";
+            case RIL_UNSOL_STK_CALL_CONTROL_RESULT: return "RIL_UNSOL_STK_CALL_CONTROL_RESULT";
+            case RIL_UNSOL_TWO_MIC_STATE: return "RIL_UNSOL_TWO_MIC_STATE";
+            case RIL_UNSOL_WB_AMR_STATE: return "RIL_UNSOL_WB_AMR_STATE";
+            default: return "<unknown response: "+request+">";
+        }
+    }
+
+    protected void samsungUnsljLog(int response) {
+        riljLog("[UNSL]< " + samsungResponseToString(response));
+    }
+
+    protected void samsungUnsljLogMore(int response, String more) {
+        riljLog("[UNSL]< " + samsungResponseToString(response) + " " + more);
+    }
+
+    protected void samsungUnsljLogRet(int response, Object ret) {
+        riljLog("[UNSL]< " + samsungResponseToString(response) + " " + retToString(response, ret));
+    }
+
+    protected void samsungUnsljLogvRet(int response, Object ret) {
+        riljLogv("[UNSL]< " + samsungResponseToString(response) + " " + retToString(response, ret));
+    }
+
+    /**
+     * Set audio parameter "wb_amr" for HD-Voice (Wideband AMR).
+     *
+     * @param state: 0 = unsupported, 1 = supported.
+     */
+    private void setWbAmr(int state) {
+        if (state == 1) {
+            Rlog.d(RILJ_LOG_TAG, "setWbAmr(): setting audio parameter - wb_amr=on");
+            audioManager.setParameters("wb_amr=on");
+        } else {
+            Rlog.d(RILJ_LOG_TAG, "setWbAmr(): setting audio parameter - wb_amr=off");
+            audioManager.setParameters("wb_amr=off");
         }
     }
 
